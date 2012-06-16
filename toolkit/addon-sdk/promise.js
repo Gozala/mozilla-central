@@ -80,7 +80,7 @@ function defer() {
 
   var deferred = {
     promise: {
-      then: function then(success, failure) {
+      then: function then(resolve, reject) {
         // create a new deferred using a same `prototype`.
         var deferred = defer();
         // Decorate `resolve` / `reject` callbacks in `attempt` wrapper
