@@ -76,28 +76,34 @@ function defer() {
   deferred.promise.then(console.log, console.error)
   deferred.resolve(value)
   */
+
+  // Create an array where `pending` observers will be collected. Once promise
+  // is realized array will be nullified indicating that promise is resolved.
+  // Once promise is resolved `result` will be assigned a resolution value.
+  // Note that result is always a promise (or alike), this takes care of
+  // values / errors propagation without any additional logic.
   var pending = [], result;
 
   var deferred = {
     promise: {
-      then: function then(resolve, reject) {
-        // create a new deferred using a same `prototype`.
+      then: function then(onResolve, onReject) {
         var deferred = defer();
-        // Decorate `resolve` / `reject` callbacks in `attempt` wrapper
-        // that rejects `deferred` on exceptions. Fall back to `resolution`
-        // and `rejection` if appropriate callbacks are missing.
-        resolve = resolve ? attempt(resolve) : resolution;
-        reject = reject ? attempt(reject) : rejection;
+        // Decorate `onResolve` / `onReject` handlers with `attempt` wrapper.
+        // This will make sure that `deferred` is rejected on exceptions in
+        // event handlers. If handler is not provided fall back to
+        // `resolution` / `rejection` that will just propagate values.
+        onResolve = resolve ? attempt(onResolve) : resolution;
+        onReject = reject ? attempt(onReject) : rejection;
 
-        // Create a listeners for a enclosed promise that take care of
-        // propagation on resolution / rejection of returned promise.
-        function realize(value) { deferred.resolve(resolve(value)); }
-        function brake(reason) { deferred.resolve(reject(reason)); }
+        // Create an observers that will invoke registered handlers
+        // and propagate results to a returned promise.
+        function resolve(value) { deferred.resolve(onResolve(value)); }
+        function reject(reason) { deferred.resolve(onReject(reason)); }
 
-        // If promise is pending register listeners. Otherwise forward them to
-        // resulting resolution.
-        if (pending) pending.push([ realize, brake ]);
-        else result.then(realize, brake);
+        // If promise is pending register listeners. Otherwise forward
+        // observers to a result.
+        if (pending) pending.push([ resolve, reject ]);
+        else result.then(resolve, reject);
 
         return deferred.promise;
       }
@@ -111,12 +117,12 @@ function defer() {
         // Store resolution `value` as a promise (`value` itself may be a
         // promise), so that all subsequent listeners can be forwarded to it,
         // which either resolves immediately or forwards if `value` is
-        // a promise.
+        // a promise. This takes care of value / error propagation.
         result = isPromise(value) ? value : resolution(value);
         var observers = pending, index = 0, count = observers.length;
         // Mark promise as resolved.
         pending = null;
-        // Forward all pending observers.
+        // Forward resolution value to all registered observers.
         while (index < count) result.then.apply(result, observers[index++]);
       }
     },
