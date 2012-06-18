@@ -15,7 +15,7 @@
     }, this, { uri: __URI__, id: id });
     this.EXPORTED_SYMBOLS = Object.keys(this);
   } else {  // Browser or alike
-    var globals = this
+    var globals = this;
     factory(function require(id) {
       return globals[id];
     }, (globals[id] = {}), { uri: document.location.href + '#' + id, id: id });
@@ -25,21 +25,21 @@
 'use strict';
 
 /**
- * Internal utility: Wraps given `value` into simplified promise, pre-resolved
- * to `value`. Note the result is not a full promise, as it's method `then`
- * does not returns anything.
+ * Internal utility: Wraps given `value` into simplified promise, successfully
+ * fulfilled to a given `value`. Note the result is not a complete promise
+ * implementation, as it's method `then` does not returns anything.
  */
-function resolution(value) {
-  return { then: function then(resolve) { resolve(value); } };
+function fulfillment(value) {
+  return { then: function then(fulfill) { fulfill(value); } };
 }
 
 /**
  * Internal utility: Wraps given input into simplified promise, pre-rejected
- * with given `reason`. Note the result is not a full promise, as it's method
- * `then` does not returns anything.
+ * with a given `reason`. Note the result is not a complete promise
+ * implementation, as it's method `then` does not returns anything.
  */
 function rejection(reason) {
-  return { then: function then(resolve, reject) { reject(reason); } };
+  return { then: function then(fulfill, reject) { reject(reason); } };
 }
 
 /**
@@ -105,62 +105,78 @@ function defer() {
 
   var deferred = {
     promise: {
-      then: function then(onResolve, onReject) {
+      then: function then(onFulfill, onFailure) {
         var deferred = defer();
-        // Decorate `onResolve` / `onReject` handlers with `attempt` wrapper.
-        // This way it's guaranteed to always returns even on exceptions. On
-        // exceptions promise rejected with a thrown error is returned.
-        // If handler is missing, fall back to internal utility function that
-        // takes care of propagation.
-        onResolve = onResolve ? attempt(onResolve) : resolution;
-        onReject = onReject ? attempt(onReject) : rejection;
+        // Decorate `onFulfill` / `onFailure` handlers with `attempt` wrapper.
+        // This way `resolve` / `reject` are guaranteed to return even if
+        // `onFulfill` / `onFailure` handlers throw. On exceptions promise
+        // rejected with a thrown exception is returned. If handler is missing,
+        // fall back to internal utility function that takes care of propagation.
+        var resolve = onFulfill ? attempt(onFulfill) : fulfillment;
+        var reject = onFailure ? attempt(onFailure) : rejection;
 
         // Create a pair of observers that invoke given handlers & propagate
-        // results to a resulting promise (One that is returned by `then`).
-        function resolve(value) { deferred.resolve(onResolve(value)); }
-        function reject(reason) { deferred.resolve(onReject(reason)); }
+        // results to `deferred.promise`.
+        function onResolve(value) { deferred.resolve(resolve(value)); }
+        function onReject(reason) { deferred.resolve(reject(reason)); }
 
         // If enclosed promise observers queue is still alive a enqueue a new
         // pair into it. Note that this does not necessary means that promise
         // is pending, it may already be resolved, but we still have to queue
         // observers to guarantee an order of propagation.
-        if (observers)
-          observers.push(resolve, reject);
+        if (observers) {
+          observers.push(onResolve, onReject);
+        }
         // Otherwise just forward observers to a `result` promise (or alike).
-        else
-          result.then(resolve, reject);
+        else {
+          result.then(onResolve, onReject);
+        }
 
         return deferred.promise;
       }
     },
     /**
      * Resolves associated `promise` to a given `value`, unless it's already
-     * resolved or rejected.
+     * resolved or rejected. Note that resolved promise is not necessary a
+     * successfully fulfilled. Promise may be resolved with a promise `value`
+     * in which case `value` promise's fulfillment / rejection will propagate
+     * up to a promise resolved with `value`.
      */
     resolve: function resolve(value) {
       if (!result) {
         // Store resolution `value` in a `result` as a promise, so that all
-        // the subsequent handlers can be simple forwarded to it. This way all
-        // the promise propagation will be automatically taken care of.
-        result = isPromise(value) ? value : resolution(value);
-        // Forward already registered observers to a `result` promise in order
-        // of their registration. Note we internally shift observer pairs from
-        // queue until it's exhausted to guarantee
-        // [FIFO](http://en.wikipedia.org/wiki/FIFO) prioritization.
-        // This way handlers registered as side effect of observer forwarding
-        // will be queued rather instead of being invoked immediately.
+        // the subsequent handlers can be simply forwarded to it. Since
+        // `result` will be a promise all the value / error propagation will
+        // be automatically taken care of.
+        result = isPromise(value) ? value : fulfillment(value);
+        // Forward already registered observers to a `result` promise in the
+        // order they were registered. Note that we internally shift observer
+        // pairs from queue until it's exhausted in order to guarantee
+        // [FIFO](http://en.wikipedia.org/wiki/FIFO) order. This makes sure
+        // that handlers registered as side effect of observer forwarding
+        // are queued instead of being invoked immediately.
         while (observers.length)
           result.then(observers.shift(), observers.shift());
-        // Once `observers` queue is exhausted we nullify it, to forward
-        // new handlers straight to the `result`.
+        // Once `observers` queue is exhausted we `null`-ify it, so that
+        // new handlers will be forwarded straight to the `result`.
         observers = null;
       }
     },
     /**
      * Rejects associated `promise` with a given `reason`, unless it's already
-     * resolved / rejected.
+     * resolved / rejected. This is just a (better performing) convenience
+     * shortcut for `deferred.resolve(reject(reason))`.
      */
     reject: function reject(reason) {
+      // Note that if promise is resolved that does not necessary means that it
+      // is successfully fulfilled. Resolution value may be a promise in which
+      // case it's result propagates. In other words if promise `a` is resolved
+      // with promise `b`, `a` is either fulfilled or rejected depending
+      // on weather `b` is fulfilled or rejected. Here `deferred.promise` is
+      // resolved with a promise pre-rejected with a given `reason`, there for
+      // `deferred.promise` is rejected with a given `reason`. This may feel
+      // little awkward first, but doing it this way greatly simplifies
+      // propagation through promise chains.
       deferred.resolve(rejection(reason));
     }
   };
