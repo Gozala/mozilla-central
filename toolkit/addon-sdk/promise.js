@@ -27,7 +27,7 @@
 /**
  * Internal utility: Wraps given `value` into simplified promise, successfully
  * fulfilled to a given `value`. Note the result is not a complete promise
- * implementation, as it's method `then` does not returns anything.
+ * implementation, as its method `then` does not returns anything.
  */
 function fulfillment(value) {
   return { then: function then(fulfill) { fulfill(value); } };
@@ -36,7 +36,7 @@ function fulfillment(value) {
 /**
  * Internal utility: Wraps given input into simplified promise, pre-rejected
  * with a given `reason`. Note the result is not a complete promise
- * implementation, as it's method `then` does not returns anything.
+ * implementation, as its method `then` does not returns anything.
  */
 function rejection(reason) {
   return { then: function then(fulfill, reject) { reject(reason); } };
@@ -58,8 +58,8 @@ function attempt(f) {
 }
 
 /**
- * Internal utility: Returns `true` if given `value` is promise. Value is
- * assumed to be promise if it implements `then` method.
+ * Internal utility: Returns `true` if given `value` is a promise. Value is
+ * assumed to be a promise if it implements method `then`.
  */
 function isPromise(value) {
   return value && typeof(value.then) === 'function';
@@ -67,7 +67,7 @@ function isPromise(value) {
 
 /**
  * Creates deferred object containing fresh promise & methods to either resolve
- * or reject it. Result contains following properties:
+ * or reject it. The result is an object with the following properties:
  * - `promise` Eventual value representation implementing CommonJS [Promises/A]
  *   (http://wiki.commonjs.org/wiki/Promises/A) API.
  * - `resolve` Single shot function that resolves enclosed `promise` with a
@@ -77,7 +77,7 @@ function isPromise(value) {
  *
  *  ## Example
  *
- *  function readURI(uri, type) {
+ *  function fetchURI(uri, type) {
  *    var deferred = defer();
  *    var request = new XMLHttpRequest();
  *    request.open("GET", uri, true);
@@ -120,11 +120,14 @@ function defer() {
         function onResolve(value) { deferred.resolve(resolve(value)); }
         function onReject(reason) { deferred.resolve(reject(reason)); }
 
-        // If enclosed promise observers queue is still alive a enqueue a new
-        // pair into it. Note that this does not necessary means that promise
-        // is pending, it may already be resolved, but we still have to queue
-        // observers to guarantee an order of propagation.
+        // If enclosed promise (`this.promise`) observers queue is still alive
+        // enqueue a new observers into it. Note that this does not necessary
+        // means that promise is pending, it may already be resolved, but we
+        // still have to queue observers to guarantee an order of propagation.
         if (observers) {
+          // Note: It's cheaper to enqueue both observers than join them
+          // into single structure. Since these observers are also dequeued
+          // two at a time this is hardly an issue.
           observers.push(onResolve, onReject);
         }
         // Otherwise just forward observers to a `result` promise (or alike).
@@ -150,15 +153,16 @@ function defer() {
         // be automatically taken care of.
         result = isPromise(value) ? value : fulfillment(value);
         // Forward already registered observers to a `result` promise in the
-        // order they were registered. Note that we internally shift observer
-        // pairs from queue until it's exhausted in order to guarantee
-        // [FIFO](http://en.wikipedia.org/wiki/FIFO) order. This makes sure
-        // that handlers registered as side effect of observer forwarding
-        // are queued instead of being invoked immediately.
+        // order they were registered. Note that we dequeue two observers at
+        // a time (onResolve and onReject, which is faster than joining and
+        // forking a single data structure of pairs) until queue is exhausted.
+        // This makes sure that handlers registered as side effect of observer
+        // forwarding are queued instead of being invoked immediately,
+        // guaranteeing FIFO order.
         while (observers.length)
           result.then(observers.shift(), observers.shift());
         // Once `observers` queue is exhausted we `null`-ify it, so that
-        // new handlers will be forwarded straight to the `result`.
+        // new handlers are forwarded straight to the `result`.
         observers = null;
       }
     },
@@ -170,7 +174,7 @@ function defer() {
     reject: function reject(reason) {
       // Note that if promise is resolved that does not necessary means that it
       // is successfully fulfilled. Resolution value may be a promise in which
-      // case it's result propagates. In other words if promise `a` is resolved
+      // case its result propagates. In other words if promise `a` is resolved
       // with promise `b`, `a` is either fulfilled or rejected depending
       // on weather `b` is fulfilled or rejected. Here `deferred.promise` is
       // resolved with a promise pre-rejected with a given `reason`, there for
