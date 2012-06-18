@@ -94,12 +94,13 @@ function isPromise(value) {
  *  }
  */
 function defer() {
-  // Array to store promise observers up until it's resolved.
+  // Define FIFO queue of observer pairs. Once promise is resolved & all queued
+  // observers are forwarded to `result` and variable is set to `null`.
   var observers = [];
-  // Promise `result`, which will be assigned a resolution value once resolved.
-  // Note that result will always be assigned promise (or alike) object to take
-  // care propagation through promise chains. If `result` is `null` then
-  // promise is pending.
+  // Promise `result`, which will be assigned a resolution value once promise
+  // is resolved. Note that result will always be assigned promise (or alike)
+  // object to take care of propagation through promise chains. If result is
+  // `null` promise is not resolved yet.
   var result = null;
 
   var deferred = {
@@ -119,13 +120,15 @@ function defer() {
         function resolve(value) { deferred.resolve(onResolve(value)); }
         function reject(reason) { deferred.resolve(onReject(reason)); }
 
-        // If enclosed promise is resolved, then forward observers to the
-        // resolution result (which is promise or alike).
-        if (result)
-          result.then(resolve, reject);
-        // Otherwise register observers.
+        // If enclosed promise observers queue is still alive a enqueue a new
+        // pair into it. Note that this does not necessary means that promise
+        // is pending, it may already be resolved, but we still have to queue
+        // observers to guarantee an order of propagation.
+        if (observers)
+          observers.push(resolve, reject);
+        // Otherwise just forward observers to a `result` promise (or alike).
         else
-          observers.push({ resolve: resolve, reject: reject });
+          result.then(resolve, reject);
 
         return deferred.promise;
       }
@@ -136,17 +139,21 @@ function defer() {
      */
     resolve: function resolve(value) {
       if (!result) {
-        // Store resolution `value` as a `result` of enclosed promise. Note
-        // that `result` is a promise (like) or normalized to one, this way all
-        // subsequent listeners can be simple forwarded to and all the
-        // propagation will automatically be taken care of.
+        // Store resolution `value` in a `result` as a promise, so that all
+        // the subsequent handlers can be simple forwarded to it. This way all
+        // the promise propagation will be automatically taken care of.
         result = isPromise(value) ? value : resolution(value);
-        // Forward all registered observers to a result.
-        var pending = observers.splice(0), index = 0, count = pending.length;
-        while (index < count) {
-          var observer = pending[index++];
-          result.then(observer.resolve, observer.reject);
-        }
+        // Forward already registered observers to a `result` promise in order
+        // of their registration. Note we internally shift observer pairs from
+        // queue until it's exhausted to guarantee
+        // [FIFO](http://en.wikipedia.org/wiki/FIFO) prioritization.
+        // This way handlers registered as side effect of observer forwarding
+        // will be queued rather instead of being invoked immediately.
+        while (observers.length)
+          result.then(observers.shift(), observers.shift());
+        // Once `observers` queue is exhausted we nullify it, to forward
+        // new handlers straight to the `result`.
+        observers = null;
       }
     },
     /**
