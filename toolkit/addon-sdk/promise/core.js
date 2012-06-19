@@ -20,7 +20,7 @@
       return globals[id];
     }, (globals[id] = {}), { uri: document.location.href + '#' + id, id: id });
   }
-}).call(this, 'promise', function(require, exports, module) {
+}).call(this, 'promise/core', function(require, exports, module) {
 
 'use strict';
 
@@ -97,6 +97,7 @@ function defer() {
   // Define FIFO queue of observer pairs. Once promise is resolved & all queued
   // observers are forwarded to `result` and variable is set to `null`.
   var observers = [];
+
   // Promise `result`, which will be assigned a resolution value once promise
   // is resolved. Note that result will always be assigned promise (or alike)
   // object to take care of propagation through promise chains. If result is
@@ -105,34 +106,35 @@ function defer() {
 
   var deferred = {
     promise: {
-      then: function then(onFulfill, onFailure) {
+      then: function then(onFulfill, onError) {
         var deferred = defer();
-        // Decorate `onFulfill` / `onFailure` handlers with `attempt` wrapper.
-        // This way `resolve` / `reject` are guaranteed to return even if
-        // `onFulfill` / `onFailure` handlers throw. On exceptions promise
-        // rejected with a thrown exception is returned. If handler is missing,
-        // fall back to internal utility function that takes care of propagation.
-        var resolve = onFulfill ? attempt(onFulfill) : fulfillment;
-        var reject = onFailure ? attempt(onFailure) : rejection;
+
+        // Decorate `onFulfill` / `onError` handlers with `attempt`, that
+        // way if wrapped handler throws exception decorator will catch and
+        // return promise rejected with it, which will cause rejection of
+        // `deferred.promise`. If handler is missing, substitute it with an
+        // utility function that takes one argument and returns promise
+        // fulfilled / rejected with it. This takes care of propagation
+        // through the rest of the promise chain.
+        onFulfill = onFulfill ? attempt(onFulfill) : fulfillment;
+        onError = onError ? attempt(onError) : rejection;
 
         // Create a pair of observers that invoke given handlers & propagate
         // results to `deferred.promise`.
-        function onResolve(value) { deferred.resolve(resolve(value)); }
-        function onReject(reason) { deferred.resolve(reject(reason)); }
+        function resolve(value) { deferred.resolve(onFulfill(value)); }
+        function reject(reason) { deferred.resolve(onError(reason)); }
 
         // If enclosed promise (`this.promise`) observers queue is still alive
-        // enqueue a new observers into it. Note that this does not necessary
-        // means that promise is pending, it may already be resolved, but we
-        // still have to queue observers to guarantee an order of propagation.
+        // enqueue a new observer pair into it. Note that this does not
+        // necessary means that promise is pending, it may already be resolved,
+        // but we still have to queue observers to guarantee an order of
+        // propagation.
         if (observers) {
-          // Note: It's cheaper to enqueue both observers than join them
-          // into single structure. Since these observers are also dequeued
-          // two at a time this is hardly an issue.
-          observers.push(onResolve, onReject);
+          observers.push({ resolve: resolve, reject: reject });
         }
-        // Otherwise just forward observers to a `result` promise (or alike).
+        // Otherwise just forward observer pair right to a `result` promise.
         else {
-          result.then(onResolve, onReject);
+          result.then(resolve, reject);
         }
 
         return deferred.promise;
@@ -150,17 +152,20 @@ function defer() {
         // Store resolution `value` in a `result` as a promise, so that all
         // the subsequent handlers can be simply forwarded to it. Since
         // `result` will be a promise all the value / error propagation will
-        // be automatically taken care of.
+        // be uniformly taken care of.
         result = isPromise(value) ? value : fulfillment(value);
+
         // Forward already registered observers to a `result` promise in the
-        // order they were registered. Note that we dequeue two observers at
-        // a time (onResolve and onReject, which is faster than joining and
-        // forking a single data structure of pairs) until queue is exhausted.
-        // This makes sure that handlers registered as side effect of observer
-        // forwarding are queued instead of being invoked immediately,
-        // guaranteeing FIFO order.
-        while (observers.length)
-          result.then(observers.shift(), observers.shift());
+        // order they were registered. Note that we intentionally dequeue
+        // observer at a time until queue is exhausted. This makes sure that
+        // handlers registered as side effect of observer forwarding are
+        // queued instead of being invoked immediately, guaranteeing FIFO
+        // order.
+        while (observers.length) {
+          var observer = observers.shift();
+          result.then(observer.resolve, observer.reject);
+        }
+
         // Once `observers` queue is exhausted we `null`-ify it, so that
         // new handlers are forwarded straight to the `result`.
         observers = null;
