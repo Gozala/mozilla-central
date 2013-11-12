@@ -144,6 +144,16 @@
         ]]></getter>
       </property>
 
+      <method name="_notifyObservers">
+        <parameter name="aTopic"/>
+        <parameter name="aSubject"/>
+        <body><![CDATA[
+          Components.classes["@mozilla.org/observer-service;1"].
+            getService(Components.interfaces.nsIObserverService).
+            notifyObservers(aSubject, aTopic, null);
+        ]]></body>
+      </method>
+
       <method name="isFindBarInitialized">
         <parameter name="aTab"/>
         <body><![CDATA[
@@ -271,6 +281,8 @@
           if (aTab.selected)
             this._setCloseKeyState(false);
 
+          this._notifyObservers("tab-pinned", aTab);
+
           let event = document.createEvent("Events");
           event.initEvent("TabPinned", true, false);
           aTab.dispatchEvent(event);
@@ -295,6 +307,8 @@
 
           if (aTab.selected)
             this._setCloseKeyState(true);
+
+          this._notifyObservers("tab-unpinned", aTab);
 
           let event = document.createEvent("Events");
           event.initEvent("TabUnpinned", true, false);
@@ -615,6 +629,9 @@
                 if (this._shouldShowProgress(aRequest)) {
                   if (!(aStateFlags & nsIWebProgressListener.STATE_RESTORING)) {
                     this.mTab.setAttribute("busy", "true");
+                    this.mTabBrowser._notifyObservers("tab-busy", this.mTab);
+                    this.mTabBrowser._tabAttrModified(this.mTab);
+
                     if (!(aWebProgress.loadType & Ci.nsIDocShell.LOAD_CMD_RELOAD))
                       this.mTabBrowser.setTabTitleLoading(this.mTab);
                   }
@@ -628,7 +645,10 @@
 
                 if (this.mTab.hasAttribute("busy")) {
                   this.mTab.removeAttribute("busy");
+
+                  this.mTabBrowser._notifyObservers("tab-unbusy", this.mTab);
                   this.mTabBrowser._tabAttrModified(this.mTab);
+
                   if (!this.mTab.selected)
                     this.mTab.setAttribute("unread", "true");
                 }
@@ -822,6 +842,8 @@
                 aTab.setAttribute("image", sizedIconUrl);
               else
                 aTab.removeAttribute("image");
+
+              this._notifyObservers("tab-icon-change", aTab);
               this._tabAttrModified(aTab);
             }
 
@@ -1082,6 +1104,9 @@
             // Focus is suppressed in the event that the main browser window is minimized - focusing a tab would restore the window
             if (!this._previewMode) {
               // We've selected the new tab, so go ahead and notify listeners.
+              this._notifyObservers("tab-unselect", oldTab);
+              this._notifyObservers("tab-select", this.mCurrentTab);
+
               let event = document.createEvent("Events");
               event.initEvent("TabSelect", true, false);
               this.mCurrentTab.dispatchEvent(event);
@@ -1178,6 +1203,8 @@
           <![CDATA[
             aTab.label = this.mStringBundle.getString("tabs.connecting");
             aTab.crop = "end";
+
+            this._notifyObservers("tab-title-change", aTab);
             this._tabAttrModified(aTab);
           ]]>
         </body>
@@ -1223,6 +1250,8 @@
 
             aTab.label = title;
             aTab.crop = crop;
+
+            this._notifyObservers("tab-title-change", aTab);
             this._tabAttrModified(aTab);
 
             if (aTab.selected)
@@ -1539,9 +1568,11 @@
             notificationbox.appendChild(browserSidebarContainer);
 
             var position = this.tabs.length - 1;
-            var uniqueId = this._generateUniquePanelID();
-            notificationbox.id = uniqueId;
-            t.linkedPanel = uniqueId;
+            var uniqueId = this._generateUniqueID();
+            var uniquePanelId = "panel-" + uniqueId;
+            notificationbox.id = uniquePanelId;
+            t.linkedPanel = uniquePanelId;
+            t.id = "tab-" + uniqueId;
             t.linkedBrowser = b;
             t._tPos = position;
             this.tabContainer._setPositionalAttributes();
@@ -1585,6 +1616,8 @@
             // Dispatch a new tab notification.  We do this once we're
             // entirely done, so that things are in a consistent state
             // even if the event listener opens or closes tabs.
+            this._notifyObservers("tab-open", t);
+
             var evt = document.createEvent("Events");
             evt.initEvent("TabOpen", true, false);
             t.dispatchEvent(evt);
@@ -1936,6 +1969,8 @@
             // Dispatch a notification.
             // We dispatch it before any teardown so that event listeners can
             // inspect the tab that's about to close.
+            this._notifyObservers("tab-close", aTab);
+
             var evt = document.createEvent("UIEvent");
             evt.initUIEvent("TabClose", true, false, window, aTabWillBeMoved ? 1 : 0);
             aTab.dispatchEvent(evt);
@@ -2210,6 +2245,8 @@
               var isBusy = aOtherTab.hasAttribute("busy");
               if (isBusy) {
                 aOurTab.setAttribute("busy", "true");
+
+                this._notifyObservers("tab-busy", aOurTab);
                 this._tabAttrModified(aOurTab);
                 if (aOurTab.selected)
                   this.mIsBusy = true;
@@ -2403,6 +2440,8 @@
 
             this.tabContainer._setPositionalAttributes();
 
+            this._notifyObservers("tab-show", aTab);
+
             let event = document.createEvent("Events");
             event.initEvent("TabShow", true, false);
             aTab.dispatchEvent(event);
@@ -2423,6 +2462,8 @@
             this.tabContainer.adjustTabstrip();
 
             this.tabContainer._setPositionalAttributes();
+
+            this._notifyObservers("tab-hide", aTab);
 
             let event = document.createEvent("Events");
             event.initEvent("TabHide", true, false);
@@ -2551,6 +2592,8 @@
             this.tabContainer._positionPinnedTabs();
 
           this.tabContainer._setPositionalAttributes();
+
+          this._notifyObservers("tab-move", aTab);
 
           var evt = document.createEvent("UIEvents");
           evt.initUIEvent("TabMove", true, false, window, oldPosition);
@@ -2991,9 +3034,11 @@
           document.addEventListener("keypress", this, false);
           window.addEventListener("sizemodechange", this, false);
 
-          var uniqueId = this._generateUniquePanelID();
-          this.mPanelContainer.childNodes[0].id = uniqueId;
-          this.mCurrentTab.linkedPanel = uniqueId;
+          var uniqueId = this._generateUniqueID();
+          var uniquePanelId = "panel-" + uniqueId;
+          this.mPanelContainer.childNodes[0].id = uniquePanelId;
+          this.mCurrentTab.linkedPanel = uniquePanelId;
+          this.mCurrentTab.id = "tab-" + uniqueId;
           this.mCurrentTab._tPos = 0;
           this.mCurrentTab._fullyOpen = true;
           this.mCurrentTab.linkedBrowser = this.mCurrentBrowser;
@@ -3035,26 +3080,27 @@
             messageManager.addMessageListener("DOMTitleChanged", this);
             messageManager.addMessageListener("contextmenu", this);
           }
+
+          this._notifyObservers("initial-tab-open", this.mCurrentTab);
         ]]>
       </constructor>
 
-      <method name="_generateUniquePanelID">
+      <method name="_generateUniqueID">
         <body><![CDATA[
-          if (!this._uniquePanelIDCounter) {
-            this._uniquePanelIDCounter = 0;
+          if (!this._uniqueIDCounter) {
+            this._uniqueIDCounter = 0;
           }
 
           let outerID = window.QueryInterface(Ci.nsIInterfaceRequestor)
                               .getInterface(Ci.nsIDOMWindowUtils)
                               .outerWindowID;
 
-          // We want panel IDs to be globally unique, that's why we include the
+          // We want IDs to be globally unique, that's why we include the
           // window ID. We switched to a monotonic counter as Date.now() lead
           // to random failures because of colliding IDs.
-          return "panel-" + outerID + "-" + (++this._uniquePanelIDCounter);
+          return outerID + "-" + (++this._uniqueIDCounter);
         ]]></body>
       </method>
-
       <method name="_addProgressListenerForInitialTab">
         <body><![CDATA[
           this.webProgress.addProgressListener(this.mTabFilters[0], Ci.nsIWebProgress.NOTIFY_ALL);
