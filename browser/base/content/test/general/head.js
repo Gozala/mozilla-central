@@ -422,3 +422,12 @@ let FullZoomHelper = {
     };
   },
 };
+
+const Test = (routine) => () => {
+  waitForExplicitFinish();
+  Task.spawn(routine)
+      .then(finish, error => {
+        ok(false, error);
+        finish();
+      });
+}
